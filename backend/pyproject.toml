@@ -1,0 +1,49 @@
+[project]
+name = "yuktiops-backend"
+version = "0.2.0"
+description = "YuktiOpsAI backend — projects, tasks, credits, referrals, Telegram, GitHub, AI solutions, social research, rewarded ads."
+requires-python = ">=3.12"
+dependencies = [
+    # Web framework
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "pydantic>=2.9.0",
+    "pydantic-settings>=2.5.0",
+    # Database — PostgreSQL (Supabase) primary; aiosqlite for local dev fallback
+    "sqlalchemy[asyncio]>=2.0.35",
+    "asyncpg>=0.29.0",
+    "aiosqlite>=0.20.0",
+    "alembic>=1.13.0",
+    # HTTP client (Telegram, GitHub, LinkedIn, Reddit)
+    "httpx>=0.27.2",
+    # LLM (reuse same provider as agents service)
+    "langchain-core>=0.3.0",
+    "langchain-openai>=0.2.0",
+    # Firebase Admin SDK
+    "firebase-admin>=6.5.0",
+    # Reddit (official API)
+    "asyncpraw>=7.7.1",
+    # Async background tasks / Redis queue
+    "arq>=0.26.1",
+    "redis>=5.1.0",
+    # Environment and utilities
+    "python-dotenv>=1.0.1",
+    "python-jose[cryptography]>=3.3.0",
+    "greenlet>=3.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "httpx>=0.27.2",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+asyncio_mode = "auto"
+testpaths = ["tests"]

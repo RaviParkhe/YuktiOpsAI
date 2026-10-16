@@ -29,15 +29,20 @@ class Settings(BaseSettings):
 
     # Core App
     APP_NAME: str = "YuktiOps Agent Service"
-    APP_VERSION: str = "0.1.0"
+    APP_VERSION: str = "0.2.0"
     ENVIRONMENT: Environment = Environment.DEVELOPMENT
     DEBUG: bool = False
     HOST: str = "0.0.0.0"
     PORT: int = 8000
     LOG_LEVEL: str = "INFO"
 
-    # Database
-    # Default to local sqlite for zero-friction local tests; override with postgres in prod/docker
+    # CORS
+    CORS_ORIGINS: str = Field(
+        default="http://localhost:3000,http://localhost:5173",
+        description="Comma-separated allowed origins for CORS",
+    )
+
+    # Database — PostgreSQL (Supabase) preferred; SQLite fallback for local dev
     DATABASE_URL: str = Field(
         default="sqlite+aiosqlite:///./yuktiops.db",
         description="Async database connection string (PostgreSQL or SQLite)",
@@ -49,6 +54,13 @@ class Settings(BaseSettings):
         description="Redis connection URL for async queues",
     )
 
+    # Firebase Admin SDK
+    FIREBASE_PROJECT_ID: Optional[str] = None
+    FIREBASE_SERVICE_ACCOUNT_JSON: Optional[str] = Field(
+        default=None,
+        description="JSON string of Firebase service account credentials",
+    )
+
     # GitHub App
     GITHUB_APP_ID: Optional[str] = None
     GITHUB_APP_PRIVATE_KEY: Optional[str] = None
@@ -57,9 +69,18 @@ class Settings(BaseSettings):
         description="Webhook secret to verify HMAC SHA256 signatures",
     )
 
-    # Telegram
+    # Telegram Bot
     TELEGRAM_BOT_TOKEN: Optional[str] = None
     TELEGRAM_ALERT_CHAT_ID: Optional[str] = None
+    TELEGRAM_WEBHOOK_SECRET: Optional[str] = Field(
+        default=None,
+        description="Secret token for verifying Telegram webhook updates",
+    )
+    # PUBLIC_BASE_URL used for registering Telegram webhook endpoint
+    PUBLIC_BASE_URL: Optional[str] = Field(
+        default=None,
+        description="Public HTTPS base URL (e.g. from ngrok) for Telegram webhook registration",
+    )
 
     # LLM Provider (Google Gemini)
     GEMINI_API_KEY: Optional[str] = None
@@ -75,11 +96,65 @@ class Settings(BaseSettings):
         """Return GEMINI_API_KEY or GOOGLE_API_KEY, whichever is configured."""
         return self.GEMINI_API_KEY or self.GOOGLE_API_KEY
 
+    # Reddit API (PRAW / OAuth2)
+    REDDIT_CLIENT_ID: Optional[str] = None
+    REDDIT_CLIENT_SECRET: Optional[str] = None
+    REDDIT_USER_AGENT: str = "YuktiOpsAI/0.2 (hackathon research bot)"
+
+    # LinkedIn API
+    LINKEDIN_CLIENT_ID: Optional[str] = None
+    LINKEDIN_CLIENT_SECRET: Optional[str] = None
+    LINKEDIN_ACCESS_TOKEN: Optional[str] = Field(
+        default=None,
+        description="Long-lived LinkedIn OAuth2 access token for API calls",
+    )
+
+    # Rewarded Ads
+    REWARDED_ADS_TEST_MODE: bool = Field(
+        default=True,
+        description="When True, skip real ad provider verification (dev/test only)",
+    )
+    ADMOB_SERVER_SIDE_VERIFICATION_SECRET: Optional[str] = Field(
+        default=None,
+        description="AdMob SSV HMAC secret for verifying rewarded ad completions",
+    )
+
+    # Credits & Referrals (configurable — no hardcoded business values)
+    CREDIT_COST_FULL_SOLUTION: int = Field(
+        default=10,
+        description="Credit cost to generate a full AI solution (product decision required)",
+    )
+    CREDIT_COST_SOCIAL_RESEARCH: int = Field(
+        default=5,
+        description="Credit cost for Reddit/LinkedIn research (product decision required)",
+    )
+    CREDIT_REFERRAL_REWARD: int = Field(
+        default=20,
+        description="Credits awarded to referrer on qualifying activation (product decision required)",
+    )
+    CREDIT_REFERRAL_REFEREE_REWARD: int = Field(
+        default=10,
+        description="Credits awarded to new user who used a referral code (product decision required)",
+    )
+    CREDIT_NEW_USER_GRANT: int = Field(
+        default=50,
+        description="Free credits granted to new users on first sign-in (product decision required)",
+    )
+    REWARDED_AD_UNLOCK_DURATION_SECONDS: int = Field(
+        default=3600,
+        description="Seconds a feature unlock granted by rewarded ad remains active",
+    )
+    REWARDED_AD_ELIGIBLE_FEATURES: str = Field(
+        default="full_solution,social_research",
+        description="Comma-separated feature keys that can be unlocked via rewarded ad",
+    )
+
     # Context & Cost Boundaries
     MAX_DIFF_LINES: int = 1200
     MAX_DIFF_BYTES: int = 60000
     SEVERITY_NOTIFICATION_THRESHOLD: SeverityLevel = SeverityLevel.HIGH
 
+<<<<<<< Updated upstream
     # CORS — comma-separated list of allowed frontend origins.
     # In .env use:  ALLOWED_ORIGINS=http://localhost:3000,https://app.example.com
     # Stored as a plain string; split to list at the CORS middleware call site.
@@ -105,6 +180,15 @@ class Settings(BaseSettings):
                 "Generate one with: python -c \"import secrets; print(secrets.token_hex(32))\""
             )
         return v
+=======
+    @property
+    def cors_origins_list(self) -> list[str]:
+        return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
+
+    @property
+    def rewarded_ad_features_list(self) -> list[str]:
+        return [f.strip() for f in self.REWARDED_AD_ELIGIBLE_FEATURES.split(",") if f.strip()]
+>>>>>>> Stashed changes
 
 
 @lru_cache()
