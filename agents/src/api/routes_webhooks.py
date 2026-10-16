@@ -1,19 +1,140 @@
 import json
 import logging
+import re
 import uuid
+from typing import Any, Dict, Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from src.config import get_settings
-from src.db.models import AnalysisRun, AuditEvent, WebhookEvent
+from src.db.models import AnalysisRun, AuditEvent, GitHubEvidence, Task, TaskMessage, WebhookEvent
 from src.db.session import get_db
 from src.schemas.analysis import AnalysisRunStatus, CIStatus
 from src.schemas.common import APIResponse, ErrorDetail, ErrorResponse
 from src.schemas.webhooks import WebhookEventResponse
 from src.services.github import GitHubService
-from src.worker.jobs import enqueue_pr_analysis
+from src.worker.jobs import enqueue_pr_analysis, enqueue_task_message
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+class TelegramWebhookPayload(BaseModel):
+    update_id: Optional[int] = None
+    message: Optional[Dict[str, Any]] = None
+    # Direct payload support for API clients & tests
+    sender_id: Optional[str] = None
+    message_text: Optional[str] = None
+    source_event_id: Optional[str] = None
+    project_id: Optional[str] = None
+    task_id: Optional[str] = None
+
+
+@router.post(
+    "/telegram",
+    response_model=APIResponse[Dict[str, Any]],
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Receive Telegram Chat Message or Webhook Update",
+)
+async def handle_telegram_webhook(
+    request: Request,
+    payload: TelegramWebhookPayload,
+    db: AsyncSession = Depends(get_db),
+):
+    """Receive Telegram message, normalize into common agent input, deduplicate, and enqueue."""
+    # 1. Normalize Telegram update into standard input fields
+    sender_id = payload.sender_id
+    message_text = payload.message_text
+    source_event_id = payload.source_event_id
+    project_id = payload.project_id
+    task_id = payload.task_id
+
+    if payload.message:
+        msg_obj = payload.message
+        msg_id = msg_obj.get("message_id")
+        date = msg_obj.get("date")
+        if not source_event_id and msg_id:
+            source_event_id = f"tg_{msg_id}_{date}"
+
+        if not message_text:
+            message_text = msg_obj.get("text", "")
+
+        if not sender_id:
+            from_obj = msg_obj.get("from", {})
+            sender_id = from_obj.get("username") or from_obj.get("first_name") or str(from_obj.get("id", "unknown"))
+
+    if not message_text:
+        return APIResponse(
+            success=True,
+            message="Ignored non-text Telegram message",
+            data={"status": "ignored"},
+        )
+
+    sender_id = sender_id or "anonymous"
+    source_event_id = source_event_id or f"msg_{uuid.uuid4().hex[:12]}"
+
+    # 2. Deduplicate repeated source events
+    dup_stmt = select(TaskMessage).where(TaskMessage.source_event_id == source_event_id)
+    dup_res = await db.execute(dup_stmt)
+    if dup_res.scalar_one_or_none():
+        logger.info(f"Duplicate Telegram event {source_event_id} received. Ignoring to prevent duplicate proposals.")
+        return APIResponse(
+            success=True,
+            message="Duplicate event ignored",
+            data={"source_event_id": source_event_id, "status": "duplicate_ignored"},
+        )
+
+    # 3. Persist incoming task message
+    msg_id = str(uuid.uuid4())
+    task_message = TaskMessage(
+        id=msg_id,
+        project_id=project_id,
+        task_id=task_id,
+        sender_id=sender_id,
+        source_platform="telegram",
+        source_event_id=source_event_id,
+        message_text=message_text,
+    )
+    db.add(task_message)
+
+    # 4. Audit message receipt
+    run_id = str(uuid.uuid4())
+    db.add(
+        AuditEvent(
+            run_id=run_id,
+            actor=f"user:{sender_id}",
+            action="telegram_message_received",
+            details={
+                "message_text": message_text,
+                "source_event_id": source_event_id,
+                "task_id": task_id,
+            },
+        )
+    )
+    await db.commit()
+
+    # 5. Enqueue for asynchronous agent pipeline execution
+    await enqueue_task_message(
+        run_id=run_id,
+        sender_id=sender_id,
+        message_text=message_text,
+        project_id=project_id,
+        task_id=task_id,
+        source_event_id=source_event_id,
+        source_platform="telegram",
+    )
+
+    return APIResponse(
+        success=True,
+        message="Telegram message accepted and queued for agent reasoning",
+        data={
+            "run_id": run_id,
+            "message_id": msg_id,
+            "source_event_id": source_event_id,
+            "status": "queued",
+        },
+    )
 
 
 @router.post(
@@ -32,7 +153,7 @@ async def handle_github_webhook(
     x_github_delivery: str = Header(None, alias="X-GitHub-Delivery"),
     db: AsyncSession = Depends(get_db),
 ):
-    """Receive, verify HMAC signature, persist, and queue GitHub webhook events."""
+    """Receive, verify HMAC signature, normalize GitHub events as task evidence, and queue."""
     settings = get_settings()
     body_bytes = await request.body()
 
@@ -72,11 +193,44 @@ async def handle_github_webhook(
     )
     db.add(webhook_record)
 
-    # 4. Filter and dispatch PR analysis
-    if x_github_event == "pull_request" and action in ("opened", "synchronize", "reopened"):
-        pr_data = payload.get("pull_request", {})
-        repo_data = payload.get("repository", {})
+    # 4. Attach GitHub event as supporting evidence to matching Task
+    # Rule: GitHub events are normalized as evidence records linked to a task, not as standalone triggers.
+    # Check if event text mentions a task key (e.g. YUK-101)
+    search_texts = []
+    pr_data = payload.get("pull_request", {})
+    if pr_data:
+        search_texts.extend([pr_data.get("title", ""), pr_data.get("body", ""), pr_data.get("head", {}).get("ref", "")])
+    commits = payload.get("commits", [])
+    for c in commits:
+        search_texts.append(c.get("message", ""))
 
+    matched_task = None
+    for text in search_texts:
+        m = re.search(r"\b([A-Za-z]{2,10}-\d+)\b", text)
+        if m:
+            task_res = await db.execute(select(Task).where(Task.task_key == m.group(1).upper()))
+            matched_task = task_res.scalar_one_or_none()
+            if matched_task:
+                break
+
+    if matched_task:
+        evidence = GitHubEvidence(
+            id=str(uuid.uuid4()),
+            task_id=matched_task.id,
+            project_id=matched_task.project_id,
+            event_type=x_github_event,
+            delivery_id=x_github_delivery,
+            commit_sha=payload.get("head_commit", {}).get("id") or pr_data.get("head", {}).get("sha"),
+            pr_number=pr_data.get("number"),
+            branch=pr_data.get("head", {}).get("ref") or payload.get("ref"),
+            details={"action": action, "summary": f"GitHub {x_github_event} event recorded as supporting evidence"},
+        )
+        db.add(evidence)
+        logger.info(f"Attached GitHub {x_github_event} as supporting evidence to task {matched_task.task_key}")
+
+    # 5. Maintain PR code review analysis trigger for PR open/synchronize
+    if x_github_event == "pull_request" and action in ("opened", "synchronize", "reopened"):
+        repo_data = payload.get("repository", {})
         repo_owner = repo_data.get("owner", {}).get("login", "")
         repo_name = repo_data.get("name", "")
         pr_number = pr_data.get("number")
@@ -96,7 +250,6 @@ async def handle_github_webhook(
         )
         db.add(analysis_run)
 
-        # Audit initial webhook trigger
         db.add(
             AuditEvent(
                 run_id=run_id,
@@ -112,7 +265,6 @@ async def handle_github_webhook(
 
         await db.commit()
 
-        # Enqueue for async execution
         await enqueue_pr_analysis(
             run_id=run_id,
             repo_owner=repo_owner,
@@ -124,8 +276,7 @@ async def handle_github_webhook(
         )
         logger.info(f"Queued PR analysis run {run_id} for {repo_owner}/{repo_name}#{pr_number}")
     else:
-        # Non-PR or unhandled event recorded as ignored
-        webhook_record.status = "ignored"
+        webhook_record.status = "processed"
         await db.commit()
 
     return APIResponse(

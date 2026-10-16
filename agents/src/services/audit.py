@@ -12,6 +12,7 @@ async def record_audit_event(
     action: str,
     run_id: Optional[str] = None,
     proposal_id: Optional[str] = None,
+    task_id: Optional[str] = None,
     details: Optional[Dict[str, Any]] = None,
     session: Optional[AsyncSession] = None,
 ) -> AuditEvent:
@@ -19,6 +20,7 @@ async def record_audit_event(
     event = AuditEvent(
         run_id=run_id,
         proposal_id=proposal_id,
+        task_id=task_id,
         actor=actor,
         action=action,
         details=details or {},
@@ -32,5 +34,5 @@ async def record_audit_event(
             local_session.add(event)
             await local_session.commit()
 
-    logger.info(f"[AUDIT] actor={actor} action={action} run_id={run_id} proposal_id={proposal_id}")
+    logger.info(f"[AUDIT] actor={actor} action={action} run_id={run_id} proposal_id={proposal_id} task_id={task_id}")
     return event

@@ -65,6 +65,10 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: Optional[str] = None
     GOOGLE_API_KEY: Optional[str] = None
     GEMINI_MODEL_NAME: str = "gemini-1.5-flash"
+    MOCK_LLM_MODE: bool = Field(
+        default=False,
+        description="When True, LLMService runs in offline deterministic mock mode for CI/evals",
+    )
 
     @property
     def gemini_key(self) -> Optional[str]:

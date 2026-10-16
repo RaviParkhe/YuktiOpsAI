@@ -17,6 +17,9 @@ settings = get_settings()
 engine_kwargs = {"echo": settings.DEBUG}
 if settings.DATABASE_URL.startswith("sqlite"):
     engine_kwargs["connect_args"] = {"check_same_thread": False}
+    if ":memory:" in settings.DATABASE_URL:
+        from sqlalchemy.pool import StaticPool
+        engine_kwargs["poolclass"] = StaticPool
 else:
     engine_kwargs["pool_size"] = 10
     engine_kwargs["max_overflow"] = 20

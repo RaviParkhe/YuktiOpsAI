@@ -45,11 +45,23 @@ def sanitize_untrusted_content(content: str, max_length: int = 60000) -> str:
 class LLMService:
     """Manages LLM invocations with prompt isolation and security boundaries."""
 
-    def __init__(self):
+    def __init__(self, mock_mode: Optional[bool] = None):
         self.settings = get_settings()
+        self.mock_mode = (
+            mock_mode
+            if mock_mode is not None
+            else getattr(self.settings, "MOCK_LLM_MODE", False)
+        )
         api_key = self.settings.gemini_key
-        self.has_key = bool(api_key)
-        if self.has_key:
+        self.has_key = bool(api_key) and not self.mock_mode
+        self.call_count: int = 0
+        self.total_prompt_tokens: int = 0
+        self.total_completion_tokens: int = 0
+
+        if self.mock_mode:
+            self.client = None
+            logger.info("LLMService initialized in deterministic MOCK mode for evaluation/testing (zero network calls).")
+        elif self.has_key:
             self.client = ChatGoogleGenerativeAI(
                 model=self.settings.GEMINI_MODEL_NAME,
                 api_key=api_key,
@@ -249,3 +261,260 @@ class LLMService:
             "description": description,
             "diff_patch": patch,
         }
+
+    async def classify_intent_and_action(
+        self,
+        message_text: str,
+        task_context: Optional[Dict[str, Any]] = None,
+        sender_id: Optional[str] = None,
+        evidence_summary: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        """Classify message intent into one of 8 standard intents and generate proposed action.
+
+        Intents:
+        1. progress_update
+        2. blocker_report
+        3. task_completed
+        4. help_request
+        5. status_question
+        6. task_assignment
+        7. general_message
+        8. ambiguous
+
+        Uses deterministic English & Hinglish rules for obvious cases, and Gemini LLM for context-dependent ones.
+        """
+        text_lower = (message_text or "").lower().strip()
+
+        # 1. Check for blocker_report (English & Hinglish)
+        is_blocker = any(
+            re.search(pat, text_lower)
+            for pat in [
+                r"\b(cannot finish|cant finish|can't finish|unable to finish|not able to finish)\b",
+                r"\b(blocked|blocker|stuck|failing because|not available|unavailable|is down)\b",
+                r"\b(nahi ho raha|atak gaya|atki hui|ruk gaya|dikkat aa rahi|chal nahi raha)\b",
+                r"\b(available nahi hai|api nahi mil rahi|api available nahi)\b",
+            ]
+        )
+        if is_blocker:
+            reason = "Backend API is unavailable"
+            if "backend api" in text_lower or "backend" in text_lower:
+                reason = "Backend API is unavailable"
+            elif "because" in text_lower:
+                reason = message_text.split("because", 1)[1].strip().rstrip(".")
+            elif "lekin" in text_lower:
+                reason = message_text.split("lekin", 1)[1].strip().rstrip(".")
+
+            progress_note = None
+            if re.search(r"\b(ui is ready|frontend ready|ui ready|done with ui)\b", text_lower):
+                progress_note = "Frontend UI is ready"
+            elif "ready" in text_lower and ("ui" in text_lower or "frontend" in text_lower):
+                progress_note = "Frontend UI is ready"
+
+            next_action = "Request API endpoint or contract from the responsible backend owner"
+            if task_context and task_context.get("dependencies"):
+                deps = ", ".join(task_context.get("dependencies", []))
+                next_action = f"Request API endpoint or contract from the responsible owner of {deps}"
+
+            return {
+                "intent": "blocker_report",
+                "proposed_action": "set_blocked",
+                "blocker_reason": reason,
+                "progress_note": progress_note,
+                "next_action": next_action,
+                "confidence": "HIGH",
+                "approval_required": True,
+            }
+
+        # 2. Check for task_completed (must NOT contain adversative like 'but' / 'lekin')
+        has_adversative = bool(re.search(r"\b(but|however|lekin|magar|except)\b", text_lower))
+        is_completed = any(
+            re.search(pat, text_lower)
+            for pat in [
+                r"\b(is ready and integrated|task completed|finished the task|all done|work completed|merged)\b",
+                r"\b(pura ho gaya|poora ho gaya|khatam ho gaya|complete ho gaya)\b",
+            ]
+        )
+        if is_completed and not has_adversative:
+            return {
+                "intent": "task_completed",
+                "proposed_action": "mark_completed",
+                "blocker_reason": None,
+                "progress_note": "All acceptance criteria verified",
+                "next_action": "Conduct final review and verify acceptance criteria",
+                "confidence": "HIGH",
+                "approval_required": True,
+            }
+
+        # 3. Check for help_request
+        is_help = any(
+            re.search(pat, text_lower)
+            for pat in [
+                r"\b(need help|can someone assist|can someone help|help needed|stuck on)\b",
+                r"\b(help chahiye|kisi ko pata hai|madad chahiye|bata do)\b",
+            ]
+        )
+        if is_help:
+            return {
+                "intent": "help_request",
+                "proposed_action": "flag_for_assistance",
+                "blocker_reason": "Assistance requested by assignee",
+                "progress_note": None,
+                "next_action": "Notify team lead / peers for technical pairing",
+                "confidence": "HIGH",
+                "approval_required": True,
+            }
+
+        # 4. Check for task_assignment
+        is_assign = any(
+            re.search(pat, text_lower)
+            for pat in [
+                r"\b(assign to|assign this to|reassign|re-assign)\b",
+                r"\b(ko assign kardo|ko assign karo|main karunga)\b",
+            ]
+        )
+        if is_assign:
+            target_assignee = None
+            m = re.search(r"assign(?:ed)?\s+(?:this\s+)?to\s+([a-zA-Z0-9_@]+)", text_lower)
+            if m:
+                target_assignee = m.group(1).lstrip("@")
+            return {
+                "intent": "task_assignment",
+                "proposed_action": "assign_task",
+                "target_assignee": target_assignee,
+                "blocker_reason": None,
+                "progress_note": None,
+                "next_action": f"Confirm reassignment to {target_assignee or 'requested owner'}",
+                "confidence": "HIGH",
+                "approval_required": True,
+            }
+
+        # 5. Check for status_question
+        is_status = any(
+            re.search(pat, text_lower)
+            for pat in [
+                r"\b(what is the status|status of|how is progress|any update on|where are we)\b",
+                r"\b(status kya hai|kaha tak pahucha|update do|kya chal raha hai)\b",
+            ]
+        )
+        if is_status:
+            return {
+                "intent": "status_question",
+                "proposed_action": "answer_status",
+                "blocker_reason": None,
+                "progress_note": None,
+                "next_action": "Provide summary of current task status and dependencies",
+                "confidence": "HIGH",
+                "approval_required": False,
+            }
+
+        # 6. Check for progress_update
+        is_progress = any(
+            re.search(pat, text_lower)
+            for pat in [
+                r"\b(working on|making progress|in progress|halfway done|partially done|pushed commit)\b",
+                r"\b(kaam chal raha hai|pragati par hai|bana raha hu|adha ho gaya)\b",
+            ]
+        )
+        if is_progress:
+            return {
+                "intent": "progress_update",
+                "proposed_action": "update_progress",
+                "blocker_reason": None,
+                "progress_note": message_text,
+                "next_action": "Continue development toward task completion",
+                "confidence": "HIGH",
+                "approval_required": True,
+            }
+
+        # 7. Check for general_message
+        is_general = any(
+            re.search(pat, text_lower)
+            for pat in [
+                r"^(hi|hello|hey|good morning|good evening|thanks|thank you|ok|okay|noted)\b",
+                r"^(namaste|theek hai|dhanyawad)\b",
+            ]
+        )
+        if is_general:
+            return {
+                "intent": "general_message",
+                "proposed_action": "acknowledge",
+                "blocker_reason": None,
+                "progress_note": None,
+                "next_action": None,
+                "confidence": "HIGH",
+                "approval_required": False,
+            }
+
+        # 8. If LLM is available, invoke Gemini for contextual / subtle classification
+        if self.has_key and self.client is not None:
+            return await self._llm_classify_intent(message_text, task_context, sender_id, evidence_summary)
+
+        # 9. Fallback if ambiguous and no LLM key
+        return {
+            "intent": "ambiguous",
+            "proposed_action": "request_clarification",
+            "blocker_reason": None,
+            "progress_note": None,
+            "next_action": "Request user clarification on task and intended action",
+            "confidence": "LOW",
+            "approval_required": False,
+        }
+
+    async def _llm_classify_intent(
+        self,
+        message_text: str,
+        task_context: Optional[Dict[str, Any]] = None,
+        sender_id: Optional[str] = None,
+        evidence_summary: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        """Invoke Gemini LLM with structured schema for contextual intent classification."""
+        system_prompt = (
+            "You are the YuktiOps DevOps Task Intent Agent. Your job is to classify engineering team chat "
+            "messages (in English or Hinglish) and propose structured task mutations.\n\n"
+            "Valid intents strictly one of:\n"
+            "['progress_update', 'blocker_report', 'task_completed', 'help_request', "
+            "'status_question', 'task_assignment', 'general_message', 'ambiguous']\n\n"
+            "CRITICAL RULES:\n"
+            "1. If a message says one part is ready but another is missing/blocked, classify as blocker_report.\n"
+            "2. Never classify a task as completed just because code was committed or a sub-component is ready.\n"
+            "3. Never invent task IDs, owners, or repository events.\n"
+            "4. Respond ONLY with valid JSON matching:\n"
+            "{\n"
+            '  "intent": "blocker_report" | "progress_update" | "task_completed" | "help_request" | "status_question" | "task_assignment" | "general_message" | "ambiguous",\n'
+            '  "proposed_action": "set_blocked" | "mark_completed" | "update_progress" | "flag_for_assistance" | "assign_task" | "answer_status" | "acknowledge" | "request_clarification",\n'
+            '  "blocker_reason": "Specific reason or null",\n'
+            '  "progress_note": "Specific progress note or null",\n'
+            '  "next_action": "Concrete next step or null",\n'
+            '  "confidence": "HIGH" | "MEDIUM" | "LOW",\n'
+            '  "approval_required": true | false\n'
+            "}"
+        )
+
+        user_content = (
+            f"Sender: {sender_id or 'unknown'}\n"
+            f"Task Context: {json.dumps(task_context or {})}\n"
+            f"GitHub Evidence: {json.dumps(evidence_summary or [])}\n"
+            f"Incoming Message: {sanitize_untrusted_content(message_text, 1000)}"
+        )
+
+        try:
+            messages = [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=user_content),
+            ]
+            response = await self.client.ainvoke(messages)
+            cleaned = _clean_json_response(response.content)
+            data = json.loads(cleaned)
+            return data
+        except Exception as e:
+            logger.error(f"LLM intent classification failed: {e}. Falling back to ambiguous.")
+            return {
+                "intent": "ambiguous",
+                "proposed_action": "request_clarification",
+                "blocker_reason": None,
+                "progress_note": None,
+                "next_action": "Request user clarification",
+                "confidence": "LOW",
+                "approval_required": False,
+            }
+

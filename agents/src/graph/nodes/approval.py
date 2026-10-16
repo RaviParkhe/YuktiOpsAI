@@ -23,6 +23,32 @@ async def approval_and_action_node(state: AgentState) -> Dict[str, Any]:
         "reviewer_id": state.get("reviewer_id"),
     }
 
+    if proposals and proposals[0].get("task_id"):
+        # Task proposal workflow
+        proposal = proposals[0]
+        audit_entry["task_id"] = proposal.get("task_id")
+
+        if approval_status == "APPROVED":
+            proposal["status"] = "EXECUTED"
+            audit_entry["action"] = "task_action_executed"
+            audit_entry["proposed_action"] = proposal.get("proposed_action")
+        elif approval_status == "REJECTED":
+            proposal["status"] = "REJECTED"
+            audit_entry["action"] = "task_action_rejected"
+        elif approval_status == "PENDING":
+            audit_entry["action"] = "awaiting_human_approval"
+        else:
+            logger.warning(f"approval_and_action_node: unrecognised approval_status='{approval_status}'")
+            audit_entry["action"] = f"unknown_status:{approval_status}"
+
+        logs = list(state.get("audit_logs", []))
+        logs.append(audit_entry)
+        return {
+            "fix_proposals": proposals,
+            "audit_logs": logs,
+        }
+
+    # PR Code Review Draft PR Workflow
     if approval_status == "APPROVED" and proposals:
         repo_owner = state.get("repo_owner", "")
         repo_name = state.get("repo_name", "")
@@ -45,7 +71,7 @@ async def approval_and_action_node(state: AgentState) -> Dict[str, Any]:
             return {"fix_proposals": proposals, "draft_pr_url": draft_pr_url, "audit_logs": logs}
 
         github = GitHubService()
-        proposal = proposals[0]  # Only the first proposal is actioned per approval cycle.
+        proposal = proposals[0]
 
         try:
             draft_pr_url = await github.create_draft_pr_for_proposal(
@@ -76,7 +102,6 @@ async def approval_and_action_node(state: AgentState) -> Dict[str, Any]:
         audit_entry["action"] = "awaiting_human_approval"
 
     else:
-        # Unknown status — log a warning so it can be distinguished from PENDING in the audit trail
         logger.warning(f"approval_and_action_node: unrecognised approval_status='{approval_status}'")
         audit_entry["action"] = f"unknown_status:{approval_status}"
 

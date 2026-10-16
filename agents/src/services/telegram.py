@@ -70,6 +70,75 @@ class TelegramNotifier:
         message_text = "\n".join(lines)
         return await self._send_message(message_text)
 
+    async def send_task_proposal_alert(
+        self,
+        task_key: str,
+        task_title: str,
+        proposal_id: str,
+        proposed_action: str,
+        blocker_reason: Optional[str] = None,
+        next_action: Optional[str] = None,
+        sender_id: Optional[str] = None,
+    ) -> bool:
+        """Send concise Telegram alert for a proposed task state mutation."""
+        if not self.is_configured:
+            logger.info(
+                f"[Telegram Mock Task Alert] Task: {task_key} ({task_title}) | "
+                f"Action: {proposed_action} | Blocker: {blocker_reason} | Proposal ID: {proposal_id}"
+            )
+            return True
+
+        lines = [
+            "📋 *YuktiOps Task Proposal*",
+            f"*Task:* `{task_key}` - {html.escape(task_title)}",
+            f"*Proposed Action:* `{proposed_action}`",
+            f"*Reported By:* `{sender_id or 'team member'}`",
+        ]
+        if blocker_reason:
+            lines.append(f"⚠️ *Blocker:* {html.escape(blocker_reason)}")
+        if next_action:
+            lines.append(f"➡️ *Next Action:* {html.escape(next_action)}")
+        lines.append("")
+        lines.append(f"🛠️ *Proposal ID:* `{proposal_id}`")
+        lines.append("Approve or reject via Team Lead dashboard or API endpoint.")
+
+        return await self._send_message("\n".join(lines))
+
+    async def send_clarification_message(
+        self,
+        clarification_text: str,
+    ) -> bool:
+        """Send clarification request back to Telegram."""
+        if not self.is_configured:
+            logger.info(f"[Telegram Mock Clarification] {clarification_text}")
+            return True
+
+        message = f"❓ *YuktiOps Assistant*\n{html.escape(clarification_text)}"
+        return await self._send_message(message)
+
+    async def send_action_execution_alert(
+        self,
+        task_key: str,
+        task_title: str,
+        action: str,
+        reviewer_id: str,
+        new_status: str,
+    ) -> bool:
+        """Send notification when a human lead approves an action and task state is updated."""
+        if not self.is_configured:
+            logger.info(
+                f"[Telegram Mock Execution Alert] Task {task_key} updated to {new_status} by {reviewer_id}"
+            )
+            return True
+
+        message = (
+            f"✅ *Task Updated: {task_key}*\n"
+            f"*Title:* {html.escape(task_title)}\n"
+            f"*Status:* `{new_status}`\n"
+            f"*Authorized By:* `{reviewer_id}`"
+        )
+        return await self._send_message(message)
+
     async def _send_message(self, text: str) -> bool:
         """Call Telegram Bot API sendMessage endpoint."""
         url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
@@ -92,3 +161,4 @@ class TelegramNotifier:
         except Exception as e:
             logger.error(f"Telegram client exception: {e}")
             return False
+

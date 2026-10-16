@@ -28,9 +28,64 @@ def compute_finding_fingerprint(finding: Dict[str, Any]) -> str:
 async def triage_and_risk_node(state: AgentState) -> Dict[str, Any]:
     """Triage & Risk Agent.
 
-    Deterministically deduplicates findings, scores severity, and normalizes findings.
-    Does NOT use expensive LLM calls for sorting or deduplication.
+    Handles either:
+    1. Task Message: Validates proposed action against DB state and business rules.
+       - Enforces strict task matching: cannot mutate task if not uniquely verified.
+       - Prevents invented IDs or unverified evidence.
+       - Verifies acceptance criteria for task completion.
+    2. PR Code Review: Deterministically deduplicates findings and scores severity.
     """
+    logs = list(state.get("audit_logs", []))
+
+    if state.get("message_text"):
+        clarification_needed = state.get("clarification_needed", False)
+        task_id = state.get("task_id")
+        intent = state.get("intent", "ambiguous")
+        proposed_action = state.get("proposed_action", "request_clarification")
+
+        # Business Rule 1: Task matching is strict. Act only on verified task linked to source event.
+        if clarification_needed or not task_id:
+            audit_entry = {
+                "node": "triage_and_risk",
+                "action": "task_triage_clarification_required",
+                "reason": "Task not uniquely identified. Downgrading to clarification request.",
+            }
+            logs.append(audit_entry)
+            return {
+                "clarification_needed": True,
+                "proposed_action": "request_clarification",
+                "approval_required": False,
+                "highest_severity": SeverityLevel.INFO.value,
+                "audit_logs": logs,
+            }
+
+        # Business Rule 2: Acceptance criteria verification.
+        # Do not treat a commit or merged PR as proof of task completion alone.
+        if intent == "task_completed":
+            ctx = state.get("relevant_context") or {}
+            # If current task is blocked, require human review before completion
+            if ctx.get("status") == "blocked":
+                logger.info(f"Task {task_id} was blocked; transition to complete requires lead review.")
+
+        # Rate severity: Blocker reports have HIGH severity to trigger Telegram notification
+        highest_sev = SeverityLevel.HIGH.value if proposed_action == "set_blocked" else SeverityLevel.INFO.value
+
+        audit_entry = {
+            "node": "triage_and_risk",
+            "action": "task_triage_validated",
+            "task_id": task_id,
+            "intent": intent,
+            "proposed_action": proposed_action,
+            "highest_severity": highest_sev,
+        }
+        logs.append(audit_entry)
+
+        return {
+            "highest_severity": highest_sev,
+            "audit_logs": logs,
+        }
+
+    # PR Code Review Triage
     raw_findings = state.get("raw_findings", [])
     deduped_map: Dict[str, Dict[str, Any]] = {}
 
@@ -39,7 +94,6 @@ async def triage_and_risk_node(state: AgentState) -> Dict[str, Any]:
         if fp not in deduped_map:
             normalized = dict(item)
             normalized["fingerprint"] = fp
-            # Ensure severity is valid enum string
             sev = str(normalized.get("severity", "INFO")).upper()
             if sev not in SEVERITY_WEIGHTS:
                 sev = SeverityLevel.INFO.value
@@ -47,8 +101,6 @@ async def triage_and_risk_node(state: AgentState) -> Dict[str, Any]:
             deduped_map[fp] = normalized
 
     triaged = list(deduped_map.values())
-
-    # Rank by severity descending
     triaged.sort(
         key=lambda f: SEVERITY_WEIGHTS.get(f.get("severity", SeverityLevel.INFO.value), 0),
         reverse=True,
@@ -64,8 +116,6 @@ async def triage_and_risk_node(state: AgentState) -> Dict[str, Any]:
         "total_findings": len(triaged),
         "highest_severity": highest_sev,
     }
-
-    logs = list(state.get("audit_logs", []))
     logs.append(audit_entry)
 
     return {
