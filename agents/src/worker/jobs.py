@@ -59,8 +59,8 @@ async def execute_pr_analysis_pipeline(
         highest_sev = final_state.get("highest_severity", "INFO")
         audit_logs = final_state.get("audit_logs", [])
 
-        # Check if workflow is waiting at approval checkpoint
-        workflow_state = app_workflow.get_state(config)
+        # Check if workflow is waiting at approval checkpoint (async-safe call)
+        workflow_state = await app_workflow.aget_state(config)
         is_paused_for_approval = bool(workflow_state and workflow_state.next and "approval_and_action" in workflow_state.next)
 
         async with async_session_factory() as session:
@@ -206,8 +206,16 @@ async def enqueue_pr_analysis(
         logger.warning(f"Could not connect to Redis ({e}). Falling back to local asyncio background task.")
 
     if not enqueued_to_redis:
-        # Standalone local development fallback
-        asyncio.create_task(
+        # Standalone local development fallback — runs in the current event loop.
+        # Store the task reference so unhandled exceptions are surfaced via the callback.
+        def _handle_task_error(task: asyncio.Task) -> None:
+            if task.cancelled():
+                return
+            exc = task.exception()
+            if exc:
+                logger.error(f"Background pipeline task failed for run_id={run_id}: {exc}", exc_info=exc)
+
+        task = asyncio.create_task(
             execute_pr_analysis_pipeline(
                 run_id=run_id,
                 repo_owner=repo_owner,
@@ -219,3 +227,4 @@ async def enqueue_pr_analysis(
                 auth_token=auth_token,
             )
         )
+        task.add_done_callback(_handle_task_error)

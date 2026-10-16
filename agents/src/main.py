@@ -42,13 +42,16 @@ app = FastAPI(
     openapi_url="/openapi.json",
 )
 
-# Enable CORS for Next.js / React dashboards and external services
+# Enable CORS for Next.js / React dashboards and external services.
+# ALLOWED_ORIGINS is loaded from the .env file (e.g. http://localhost:3000,https://app.example.com).
+# allow_credentials must remain False when allow_origins contains "*" (browser CORS spec).
+# Set allow_credentials=True only when ALLOWED_ORIGINS lists explicit origins AND you use session/cookie auth.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=settings.allowed_origins_list,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Hub-Signature-256", "X-GitHub-Event", "X-GitHub-Delivery"],
 )
 
 

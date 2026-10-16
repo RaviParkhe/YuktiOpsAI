@@ -80,7 +80,7 @@ agents/
 │   │   └── nodes/               # Ingest, Analyst, Triage, Solution, Notifier, Approval nodes
 │   ├── services/
 │   │   ├── github.py            # GitHub App API client, diff fetcher & draft PR creator
-│   │   ├── llm.py               # LLM client with prompt injection sanitization & heuristics
+│   │   ├── llm.py               # LLM client (Google Gemini) with prompt injection sanitization & heuristics
 │   │   ├── telegram.py          # Telegram Bot notifier
 │   │   └── audit.py             # Persistent audit trail recorder
 │   └── worker/

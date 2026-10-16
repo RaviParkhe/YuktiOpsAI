@@ -108,7 +108,7 @@ async def approve_proposal(
     try:
         if req.create_draft_pr:
             # Update graph state with approval signal and resume to execute approval_and_action_node
-            app_workflow.update_state(
+            await app_workflow.aupdate_state(
                 config,
                 {
                     "approval_status": "APPROVED",
@@ -135,7 +135,9 @@ async def approve_proposal(
 
     except Exception as e:
         logger.error(f"Error resuming graph execution after approval: {e}")
-        # Audit failure
+        # Roll proposal back to APPROVED state (not EXECUTED) so it can be retried.
+        # Do NOT leave it in an undefined in-between state.
+        proposal.status = ProposalStatus.APPROVED.value
         db.add(
             AuditEvent(
                 run_id=proposal.run_id,
@@ -205,7 +207,7 @@ async def reject_proposal(
     # Resume graph to finalize rejected state
     config = {"configurable": {"thread_id": proposal.run_id}}
     try:
-        app_workflow.update_state(
+        await app_workflow.aupdate_state(
             config,
             {
                 "approval_status": "REJECTED",

@@ -1,12 +1,23 @@
 import json
 import logging
 import re
+import uuid
 from typing import Any, Dict, List, Optional
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
+from langchain_google_genai import ChatGoogleGenerativeAI
 from src.config import get_settings
 
 logger = logging.getLogger(__name__)
+
+
+def _clean_json_response(content: str) -> str:
+    """Strip markdown code fence blocks from LLM JSON responses."""
+    cleaned = content.strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```[a-zA-Z]*\n?", "", cleaned)
+    if cleaned.endswith("```"):
+        cleaned = re.sub(r"\n?```$", "", cleaned)
+    return cleaned.strip()
 
 
 def sanitize_untrusted_content(content: str, max_length: int = 60000) -> str:
@@ -36,17 +47,17 @@ class LLMService:
 
     def __init__(self):
         self.settings = get_settings()
-        self.has_key = bool(self.settings.OPENAI_API_KEY)
+        api_key = self.settings.gemini_key
+        self.has_key = bool(api_key)
         if self.has_key:
-            self.client = ChatOpenAI(
-                model=self.settings.OPENAI_MODEL_NAME,
-                openai_api_key=self.settings.OPENAI_API_KEY,
-                base_url=self.settings.OPENAI_BASE_URL,
+            self.client = ChatGoogleGenerativeAI(
+                model=self.settings.GEMINI_MODEL_NAME,
+                api_key=api_key,
                 temperature=0.1,
             )
         else:
             self.client = None
-            logger.info("OPENAI_API_KEY not set. Running in deterministic heuristic analysis mode.")
+            logger.info("GEMINI_API_KEY / GOOGLE_API_KEY not set. Running in deterministic heuristic analysis mode.")
 
     async def analyze_pr_changes(
         self,
@@ -103,10 +114,7 @@ class LLMService:
                 HumanMessage(content=user_content),
             ]
             response = await self.client.ainvoke(messages)
-            content = response.content
-            # Clean markdown codeblocks if LLM returned ```json ... ```
-            cleaned = re.sub(r"^```json\s*", "", content.strip())
-            cleaned = re.sub(r"```$", "", cleaned.strip())
+            cleaned = _clean_json_response(response.content)
             data = json.loads(cleaned)
             return data.get("findings", [])
         except Exception as e:
@@ -147,8 +155,7 @@ class LLMService:
                 HumanMessage(content=user_content),
             ]
             response = await self.client.ainvoke(messages)
-            cleaned = re.sub(r"^```json\s*", "", response.content.strip())
-            cleaned = re.sub(r"```$", "", cleaned.strip())
+            cleaned = _clean_json_response(response.content)
             return json.loads(cleaned)
         except Exception as e:
             logger.error(f"Solution Agent generation failed: {e}. Falling back to template solution.")
@@ -161,6 +168,7 @@ class LLMService:
         # Check CI failure evidence first
         if ci_status.upper() == "FAILURE":
             findings.append({
+                "id": str(uuid.uuid4()),
                 "category": "CI_FAILURE",
                 "severity": "HIGH",
                 "title": "Continuous Integration Build Failed",
@@ -171,8 +179,9 @@ class LLMService:
             })
 
         # Check for exposed private keys or API tokens
-        if re.search(r"(AKIA[0-9A-Z]{16}|ghp_[a-zA-Z0-9]{36}|AIza[0-9A-Za-z-_]{35}|BEGIN PRIVATE KEY)", diff):
+        if re.search(r"(AKIA[0-9A-Z]{16}|ghp_[a-zA-Z0-9]{36}|AIza[0-9A-Za-z-_]{35}|BEGIN PRIVATE KEY|sk-[a-zA-Z0-9]{32,}|xoxb-[0-9A-Za-z-]+)", diff):
             findings.append({
+                "id": str(uuid.uuid4()),
                 "category": "SECURITY_VULNERABILITY",
                 "severity": "CRITICAL",
                 "title": "Hardcoded Secret / Private Key Exposed",
@@ -185,6 +194,7 @@ class LLMService:
         # Check for SQL injection patterns
         if re.search(r"SELECT\s+.*\s+FROM\s+.*(%s|\{\w+\}|f\".*\{|\+)", diff, re.IGNORECASE):
             findings.append({
+                "id": str(uuid.uuid4()),
                 "category": "SECURITY_VULNERABILITY",
                 "severity": "CRITICAL",
                 "title": "Potential SQL Injection Detected",
@@ -197,6 +207,7 @@ class LLMService:
         # Check for command injection / eval
         if re.search(r"\b(eval\(|exec\(|os\.system\(|subprocess\.Popen\(.*shell\s*=\s*True)", diff):
             findings.append({
+                "id": str(uuid.uuid4()),
                 "category": "SECURITY_VULNERABILITY",
                 "severity": "HIGH",
                 "title": "Unsafe Dynamic Execution / Subshell Invocation",
@@ -209,6 +220,7 @@ class LLMService:
         # If no issues found, provide informational baseline
         if not findings:
             findings.append({
+                "id": str(uuid.uuid4()),
                 "category": "CODE_QUALITY",
                 "severity": "INFO",
                 "title": "Clean PR Inspection",
