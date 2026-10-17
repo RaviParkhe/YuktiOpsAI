@@ -1,0 +1,175 @@
+@import "tailwindcss";
+@import "@fontsource/michroma/index.css";
+@import "@fontsource/geist-sans/400.css";
+@import "@fontsource/geist-sans/500.css";
+@import "@fontsource/geist-sans/600.css";
+@import "@fontsource/geist-sans/700.css";
+@import "@fontsource/geist-mono/400.css";
+@import "@fontsource/geist-mono/500.css";
+@import "@fontsource/geist-mono/600.css";
+@import "@fontsource/noto-sans-devanagari/500.css";
+@import "@fontsource/noto-sans-devanagari/600.css";
+@import "@fontsource/noto-sans-devanagari/700.css";
+
+@theme inline {
+  --font-sans: 'Geist Sans', 'Geist', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-display: 'Michroma', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: 'Geist Mono', monospace;
+  --font-devanagari: 'Noto Sans Devanagari', -apple-system, BlinkMacSystemFont, sans-serif;
+
+  /* Official YuktiOps Palette Tokens */
+  --color-canvas: #090D16;
+  --color-midnight: #090D16;
+  --color-surface-elevated: #111925;
+  --color-surface: #111925;
+  --color-surface-secondary: #161F2D;
+  --color-surface-hover: #161F2D;
+  --color-surface-card: #111925;
+  --color-border-subtle: #263246;
+  --color-border-accent: rgba(98, 203, 232, 0.25);
+  --color-accent-primary: #62CBE8;
+  --color-accent-hover: #79D6EE;
+  --color-accent-btn-text: #07131C;
+  --color-success: #38B982;
+  --color-warning: #E5B85C;
+  --color-error: #E47777;
+  --color-text-main: #F1F5F9;
+  --color-text-secondary: #A0AEC0;
+  --color-text-muted: #77869B;
+}
+
+@layer base {
+  :root {
+    --font-sans: 'Geist Sans', 'Geist', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    --font-display: 'Michroma', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --font-mono: 'Geist Mono', monospace;
+    --font-devanagari: 'Noto Sans Devanagari', -apple-system, BlinkMacSystemFont, sans-serif;
+
+    --bg-canvas: #090D16;
+    --bg-surface: #111925;
+    --bg-surface-secondary: #161F2D;
+    --bg-sidebar: #090D16;
+    --bg-stage: #111925;
+    --bg-card: #111925;
+    --bg-card-hover: #161F2D;
+    --border-subtle: #263246;
+    --border-active: #62CBE8;
+    --text-primary: #F1F5F9;
+    --text-secondary: #A0AEC0;
+    --text-muted: #77869B;
+    --accent-primary: #62CBE8;
+    --accent-hover: #79D6EE;
+    --accent-btn-text: #07131C;
+    --accent-success: #38B982;
+    --accent-warning: #E5B85C;
+    --accent-error: #E47777;
+  }
+
+  * {
+    border-color: var(--border-subtle);
+  }
+
+  body {
+    background-color: var(--bg-canvas);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    overflow-x: clip;
+    scroll-behavior: smooth;
+  }
+}
+
+/* Reusable font utilities */
+.font-display {
+  font-family: var(--font-display);
+  letter-spacing: 0.02em;
+}
+
+.font-sans {
+  font-family: var(--font-sans);
+}
+
+.font-mono {
+  font-family: var(--font-mono);
+}
+
+.font-devanagari {
+  font-family: var(--font-devanagari);
+}
+
+/* Three-font Typography Class System */
+.heading-display {
+  font-family: var(--font-display);
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  line-height: 1.25;
+}
+
+.heading-section {
+  font-family: var(--font-sans);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.text-technical {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  letter-spacing: 0.02em;
+}
+
+/* Precision technical grid backgrounds */
+.tech-grid {
+  background-image: 
+    linear-gradient(to right, rgba(98, 203, 232, 0.04) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(98, 203, 232, 0.04) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+.tech-dots {
+  background-image: radial-gradient(rgba(98, 203, 232, 0.08) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+/* 3D Perspective Container for Yukti Core */
+.perspective-1200 {
+  perspective: 1200px;
+  transform-style: preserve-3d;
+}
+
+.preserve-3d {
+  transform-style: preserve-3d;
+}
+
+/* Accessible reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+  
+  .preserve-3d {
+    transform: none !important;
+  }
+}
+
+/* Custom technical scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #090D16;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #263246;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #62CBE8;
+}

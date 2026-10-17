@@ -1,0 +1,36 @@
+/* YuktiOps Shared Layout, Keyframes & Typography Styles */
+
+/* Subtle glowing accent utilities (reserved strictly for key interactive elements) */
+.accent-glow-subtle {
+  box-shadow: 0 0 12px rgba(98, 203, 232, 0.15);
+}
+
+.accent-glow-focus:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+}
+
+/* Subtle transitions for interactive elements */
+.transition-workspace {
+  transition-property: color, background-color, border-color, box-shadow;
+  transition-duration: 150ms;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Three-font Typography Helper Rules */
+.font-display-title {
+  font-family: var(--font-display);
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  line-height: 1.25;
+}
+
+.font-interface-body {
+  font-family: var(--font-sans);
+  line-height: 1.5;
+}
+
+.font-technical-mono {
+  font-family: var(--font-mono);
+  letter-spacing: 0.01em;
+}

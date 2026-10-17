@@ -1,0 +1,41 @@
+{
+  "name": "temp-app",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "lint": "oxlint",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@fontsource/geist-mono": "^5.3.0",
+    "@fontsource/geist-sans": "^5.3.0",
+    "@fontsource/michroma": "^5.3.0",
+    "@fontsource/noto-sans-devanagari": "^5.3.0",
+    "@rolldown/binding-win32-x64-msvc": "^1.2.14",
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/three": "^0.186.0",
+    "clsx": "^2.1.1",
+    "framer-motion": "^14.3.0",
+    "geist": "^1.8.1",
+    "gsap": "^3.15.0",
+    "lucide-react": "^1.58.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "tailwind-merge": "^3.7.0",
+    "tailwindcss": "^4.3.3",
+    "three": "^0.186.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
+    "@vitejs/plugin-react": "^6.1.1",
+    "oxlint": "^1.81.0",
+    "puppeteer": "^25.14.0",
+    "typescript": "~6.0.2",
+    "vite": "^8.3.0"
+  }
+}
